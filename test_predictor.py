@@ -93,4 +93,4 @@ for exp in exponents:
                                     table[exp]["{}".format(feature)][target]['mse']['name'] = name
 
 
-print table
+print (table)
