@@ -44,17 +44,26 @@ DISTANCE = 20 #Distance in kilometers
 TRAFFIC = "CBR_PG"
 
 if TRAFFIC == "poisson":
+    #load % values which represents each exponent
+    #loads = [25,31,37,43,50,56,62,68,75,81,87,93]
+    #pkt arrival distribution exponents
+    #exponents = [1160, 1450, 1740, 2030, 2320, 2610, 2900, 3190, 3480, 3770, 4060, 4350]
     EXPONENTS = [1160, 1450, 1740, 2030, 2320, 2610, 2900, 3190, 3480, 3770, 4060, 4350]
     CPRI_PKT = [768000]
+    SEEDS = [20]
 else:
     EXPONENTS = [0]
     #CPRI_PKT = [768000, 1536000, 3072000, 3840000] #Configurações CPRI 1-4, em Kilobytes
-    CPRI_PKT = [768000]
-#load % values which represents each exponent
-#loads = [25,31,37,43,50,56,62,68,75,81,87,93]
-#pkt arrival distribution exponents
-#exponents = [1160, 1450, 1740, 2030, 2320, 2610, 2900, 3190, 3480, 3770, 4060, 4350]
-SEEDS = [20]
+    CPRI_PKT = [768000, 1536000, 3072000]
+    SEEDS = [20]
+
+DBA_ALG = 'ipact'
+
+if DBA_ALG == 'ipact':
+    PARAMS = [{'w':5, 'p':3}]
+else:
+    #melhores valores de MSE apontados pela dissertação de madson para CPRI 1-3 na distância de 20km
+    PARAMS = [{'w':10, 'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3} ]
 
 class ODN(object):
     """This class represents optical distribution Network."""
@@ -301,11 +310,11 @@ class ONUPort(object):
         if start_grant_usage and end_grant_usage > 0:# if any pkt has been sent
             #send the real grant usage
             yield self.env.timeout(self.ONU.delay) # propagation delay
-            self.grant_real_usage.put([start_grant_usage , start_grant_usage + end_grant_usage])
+            yield self.grant_real_usage.put([start_grant_usage , start_grant_usage + end_grant_usage])
         else:
             #print (why_break)
-            logging.debug("buffer_size:{}, grant duration:{}".format(len(self.buffer.get()),grant_timeout))
-            self.grant_real_usage.put([])# send a empty list
+            #logging.debug("buffer_size:{}, grant duration:{}".format(self.buffer.get(),grant_timeout))
+            yield self.grant_real_usage.put([])# send a empty list
 
     def run(self): #run the port as a simpy process
         while True:
@@ -398,7 +407,7 @@ class ONU(object):
                         next_grant = pred[0] - self.env.now #time until next grant begining
                         yield self.env.timeout(next_grant)  #wait for the next grant
                     except Exception as e:
-                        logging.debug("{}: pred {}, gf {}".format(self.env.now,pred,grant['grant_final_time']))
+                        #logging.debug("{}: pred {}, gf {}".format(self.env.now,pred,grant['grant_final_time']))
                         logging.debug("Error while waiting for the next grant ({})".format(e))
                         break
 
@@ -496,6 +505,7 @@ class IPACT(DBA):
             # timeout until the end of grant to then get next grant request
             yield self.env.timeout(delay+grant_time + self.guard_interval)
 
+#proximo teste enviar listas vazias para ver se fica igual a ipact.
 class PD_DBA(DBA):
     def __init__(self,env,max_grant_size,grant_store,window=20,predict=5,model="ols"):
         DBA.__init__(self,env,max_grant_size,grant_store)
@@ -594,11 +604,10 @@ class PD_DBA(DBA):
             predictions = list(pred)
             predcp = list(predictions)
             
-            j = 1
             #drop: if there are overlaps between the predictions
+            j = 1
             bucket_time = (ONU.bucket*8)/float(10000000000)
-            #print(ONU.delay+bucket_time)
-
+            
             for p in predcp[:-1]:
                 for q in predcp[j:]:
                     if p[1] + NUMBER_OF_ONUs*(ONU.delay+bucket_time)  > q[0]:
@@ -882,64 +891,65 @@ class collisionDetection(object):
 for seed in SEEDS:
     for exp in EXPONENTS:
         for pkt_size in CPRI_PKT:
-            FILENAME = "PD_DBA-dist{}-{}ONUs-{}OLTs-{}-exp{}-pkt{}".format(DISTANCE,NUMBER_OF_ONUs, NUMBER_OF_OLTs, TRAFFIC, exp, pkt_size)
-            if "PD_DBA" in FILENAME:
-                FILENAME = FILENAME+"-w5-p3"
-            #abertura de arquivos
-            delay_file = open("new/csv/delay/{}-s{}-delay.csv".format(FILENAME, seed),"w")
-            delay_prediction_file = open("new/csv/delay/{}-s{}-delay_pred.csv".format(FILENAME, seed),"w")
-            delay_normal_file = open("new/csv/delay/{}-s{}-delay_normal.csv".format(FILENAME, seed),"w")
-            grant_time_file = open("new/csv/grant_time/{}-s{}-grant_time.csv".format(FILENAME, seed),"w")
-            pkt_file = open("new/csv/pkt/{}-s{}-pkt.csv".format(FILENAME, seed),"w")
-            overlap_file = open("new/csv/overlap/{}-s{}-overlap.csv".format(FILENAME, seed),"w")
-            mse_file = open("new/csv/{}-s{}-mse.csv".format(FILENAME, seed), "w")
+            for parameter in PARAMS:
+                FILENAME = "{}-dist{}-{}ONUs-{}OLTs-{}-exp{}-pkt{}".format(DBA_ALG,DISTANCE,NUMBER_OF_ONUs, NUMBER_OF_OLTs, TRAFFIC, exp, pkt_size)
+                if "pd_dba" in FILENAME:
+                    FILENAME = FILENAME+"-w{}-p{}".format(parameter['w'], parameter['p'])
+                #abertura de arquivos
+                delay_file = open("new/csv/delay/{}-s{}-delay.csv".format(FILENAME, seed),"w")
+                delay_prediction_file = open("new/csv/delay/{}-s{}-delay_pred.csv".format(FILENAME, seed),"w")
+                delay_normal_file = open("new/csv/delay/{}-s{}-delay_normal.csv".format(FILENAME, seed),"w")
+                grant_time_file = open("new/csv/grant_time/{}-s{}-grant_time.csv".format(FILENAME, seed),"w")
+                pkt_file = open("new/csv/pkt/{}-s{}-pkt.csv".format(FILENAME, seed),"w")
+                overlap_file = open("new/csv/overlap/{}-s{}-overlap.csv".format(FILENAME, seed),"w")
+                mse_file = open("new/csv/{}-s{}-mse.csv".format(FILENAME, seed), "w")
 
-            delay_file.write("ONU_id,delay\n")
-            delay_normal_file.write("ONU_id,delay\n")
-            delay_prediction_file.write("ONU_id,delay\n")
-            grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
-            pkt_file.write("timestamp,adist,size\n")
-            overlap_file.write("interval\n")
-            mse_file.write("mse_start,mse_end,delay\n")
+                delay_file.write("ONU_id,delay\n")
+                delay_normal_file.write("ONU_id,delay\n")
+                delay_prediction_file.write("ONU_id,delay\n")
+                grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
+                pkt_file.write("timestamp,adist,size\n")
+                overlap_file.write("interval\n")
+                mse_file.write("mse_start,mse_end,delay\n")
 
-            #inicio de execução
-            random.seed(seed)
-            env = simpy.Environment()
-            odn = ODN(env, NUMBER_OF_ONUs, NUMBER_OF_OLTs)
-            
-            #Parametros de trafego
-            if TRAFFIC == "poisson":
-                packet_generator = poisson_PG
-                pg_params = {"adist":functools.partial(random.expovariate, exp), "sdist":None, "fix_pkt_size":pkt_size}
-            else:
-                packet_generator = CBR_PG
-                pg_params = {"fix_pkt_size":pkt_size} 
+                #inicio de execução
+                random.seed(seed)
+                env = simpy.Environment()
+                odn = ODN(env, NUMBER_OF_ONUs, NUMBER_OF_OLTs)
+                
+                #Parametros de trafego
+                if TRAFFIC == "poisson":
+                    packet_generator = poisson_PG
+                    pg_params = {"adist":functools.partial(random.expovariate, exp), "sdist":None, "fix_pkt_size":pkt_size}
+                else:
+                    packet_generator = CBR_PG
+                    pg_params = {"fix_pkt_size":pkt_size} 
 
-            #ONU creation
-            ONU_list = []
-            lamb = 0
-            channel = collisionDetection()
+                #ONU creation
+                ONU_list = []
+                lamb = 0
+                channel = collisionDetection()
 
-            for i in range(NUMBER_OF_ONUs):
-                MAC_TABLE[i] = "00:00:00:00:{}:{}".format(random.randint(0x00, 0xff),random.randint(0x00, 0xff))
-                Grant_ONU_counter[i] = 0
+                for i in range(NUMBER_OF_ONUs):
+                    MAC_TABLE[i] = "00:00:00:00:{}:{}".format(random.randint(0x00, 0xff),random.randint(0x00, 0xff))
+                    Grant_ONU_counter[i] = 0
 
-            for i in range(NUMBER_OF_ONUs):
-                ONU_list.append(
-                    ONU(DISTANCE, i, env, lamb, channel, odn, 0, 27000, packet_generator, pg_params)
-                )
+                for i in range(NUMBER_OF_ONUs):
+                    ONU_list.append(
+                        ONU(DISTANCE, i, env, lamb, channel, odn, 0, 27000, packet_generator, pg_params)
+                    )
 
-            #OLT creation
-            olt = OLT(env, lamb, odn, 0, 'pd_dba', 5, 3, 'ols', NUMBER_OF_ONUs)
-            MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
-            logging.info("Starting Simulator")
-            env.run(until=30) #Tempo de duracao simulado, em Segundos
+                #OLT creation
+                olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], 'ols', NUMBER_OF_ONUs)
+                MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
+                logging.info("Starting Simulator")
+                env.run(until=30) #Tempo de duracao simulado, em Segundos
 
-            #Closing files
-            delay_file.close()
-            delay_normal_file.close()
-            delay_prediction_file.close()
-            grant_time_file.close()
-            pkt_file.close()
-            overlap_file.close()
-            mse_file.close()
+                #Closing files
+                delay_file.close()
+                delay_normal_file.close()
+                delay_prediction_file.close()
+                grant_time_file.close()
+                pkt_file.close()
+                overlap_file.close()
+                mse_file.close()
