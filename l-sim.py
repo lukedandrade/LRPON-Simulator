@@ -66,6 +66,24 @@ else:
     #PARAMS = [{'w':10, 'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3} ]
     PARAMS = [{'w':10, 'p':3}, {'w':20, 'p':8}]
 
+class GrantPredictorReg(object):
+    
+    def __init__(self, env, window=20, n_pred=5, model="ols"):
+        self.window = window
+        self.n_pred = n_pred
+        self.grant_history = []
+        self.predictions_array = []
+        for i in range(NUMBER_OF_ONUs):
+            #separação de unidades de treino
+            self.grant_history.insert(i, {'counter': [], 'start': [], 'end': []})
+        #Implementação de modelo
+        if model == "ols":
+            reg = linear_model.LinearRegression()
+        
+        self.model = MultiOutputRegressor(reg)
+
+    pass
+
 class ODN(object):
     """This class represents optical distribution Network."""
     def __init__(self, env, n_ONUs, n_OLTs):
@@ -173,6 +191,15 @@ class poisson_PG(PacketGenerator): #Acho que está com problemas
         self.arrivals_dist = adist #packet arrivals distribution
         self.size_dist = sdist #packet size distribution
         PacketGenerator.__init__(self,env, id, ONU, fix_pkt_size, finish=float("inf"))
+        if fix_pkt_size == 768000:
+            self.eth_overhead = 0.00001562
+        elif fix_pkt_size == 1536000:
+            self.eth_overhead = 0.00003004
+        elif fix_pkt_size == 3072000:
+            self.eth_overhead = 0.00005887
+        else:
+            self.eth_overhead = 0.00007329
+            
     def run(self):
         """The generator function used in simulations.
         """
@@ -272,6 +299,7 @@ class ONUPort(object):
             self.busy = 1
             print(self.byte_size)
             print(pkt.size)
+            print("ONU {}. Pacotes recebidos: {} | Pacotes perdidos: {}".format(self.ONU.oid, self.packets_rec, self.packets_drop))
             self.byte_size -= pkt.size
             if self.byte_size < 0:#Prevent the buffer from being negative
                 logging.debug("{}: Negative buffer".format(self.env.now))
@@ -295,9 +323,6 @@ class ONUPort(object):
             self.current_grant_delay.append(self.env.now - pkt.time)
             yield self.env.timeout(sending_time)
             #if ((self.env.now - pkt.time)+self.ONU.delay) >= 1:
-            print("Now: {}".format(self.env.now))
-            print("pkt_time: {}".format(pkt.time))
-            print("Delay inerente: {}".format(self.ONU.delay))
             delay_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
             if self.predicted_grant:
                 delay_prediction_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
