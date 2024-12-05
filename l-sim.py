@@ -11,23 +11,28 @@ from sklearn.metrics import mean_squared_error as mse
 from sklearn.multioutput import MultiOutputRegressor
 
 #try de abertura de pastas
+
+BASE_DIR = 'test_poissonPG_IPACT_1'
+SIMULATION_TIME = 5
+
+
 try:
-    os.makedirs('pddba_nopred/csv/delay')
+    os.makedirs('{}/csv/delay'.format(BASE_DIR))
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
 try:
-    os.makedirs('pddba_nopred/csv/grant_time')
+    os.makedirs('{}/csv/grant_time'.format(BASE_DIR))
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
 try:
-    os.makedirs("pddba_nopred/csv/pkt")
+    os.makedirs("{}/csv/pkt".format(BASE_DIR))
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
 try:
-    os.makedirs("pddba_nopred/csv/overlap")
+    os.makedirs("{}/csv/overlap".format(BASE_DIR))
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
@@ -41,23 +46,26 @@ Grant_ONU_counter = {}
 NUMBER_OF_OLTs = 1
 NUMBER_OF_ONUs = 3
 DISTANCE = 20 #Distance in kilometers
-TRAFFIC = "CBR_PG"
+TRAFFIC = "poisson"
 
 if TRAFFIC == "poisson":
     #load % values which represents each exponent
     #loads = [25,31,37,43,50,56,62,68,75,81,87,93]
+    
     #pkt arrival distribution exponents
     #exponents = [1160, 1450, 1740, 2030, 2320, 2610, 2900, 3190, 3480, 3770, 4060, 4350]
-    EXPONENTS = [1160, 1450, 1740, 2030, 2320, 2610, 2900, 3190, 3480, 3770, 4060, 4350]
+    
+    #tentando ir diretamente por percentuais
+    EXPONENTS = [0.1, 0.2, 0.3, 0.4, 0.5]
     CPRI_PKT = [768000]
     SEEDS = [20]
 else:
     EXPONENTS = [0]
     #CPRI_PKT = [768000, 1536000, 3072000, 3840000] #Configurações CPRI 1-4, em Kilobytes
-    CPRI_PKT = [768000, 1536000]
+    CPRI_PKT = [768000]
     SEEDS = [20]
 
-DBA_ALG = 'pd_dba'
+DBA_ALG = 'ipact'
 
 if DBA_ALG == 'ipact':
     PARAMS = [{'w':5, 'p':3}]
@@ -190,6 +198,7 @@ class poisson_PG(PacketGenerator): #Acho que está com problemas
     def __init__(self,env, id, ONU, adist, sdist, fix_pkt_size):
         self.arrivals_dist = adist #packet arrivals distribution
         self.size_dist = sdist #packet size distribution
+
         PacketGenerator.__init__(self,env, id, ONU, fix_pkt_size, finish=float("inf"))
         if fix_pkt_size == 768000:
             self.eth_overhead = 0.00001562
@@ -199,24 +208,44 @@ class poisson_PG(PacketGenerator): #Acho que está com problemas
             self.eth_overhead = 0.00005887
         else:
             self.eth_overhead = 0.00007329
-            
+
     def run(self):
         """The generator function used in simulations.
         """
+        #calcula quantos eventos devem ser realizados (pacotes)
+        if self.arrivals_dist != None:
+            n_events = np.random.poisson(3734*self.arrivals_dist)
+            t_between_evts = SIMULATION_TIME/n_events
+        else:
+            n_events = 3734
+            t_between_evts = 0.004
+        
+        yield self.env.timeout(random.expovariate(100))
         while self.env.now < self.finish:
             # wait for next transmission
-            arrival = self.arrivals_dist()
-            yield self.env.timeout(arrival)
-            self.packets_sent += 1
+            yield self.env.timeout(t_between_evts)
+            
+            #Quebra do pkt_size de byte para bits
+            npkt = self.fix_pkt_size / 1500
+            npkt = int((npkt*4)/10)
+            p_list = []
+            
+            for i in range(npkt):
+                    
+                self.packets_sent += 1
 
-            if self.fix_pkt_size:
-                p = Packet(self.env.now, self.fix_pkt_size, self.packets_sent, src=self.id)
-                pkt_file.write("{},{},{}\n".format(self.env.now,arrival,self.fix_pkt_size))
-            else:
-                size = self.size_dist()
-                p = Packet(self.env.now, size, self.packets_sent, src=self.id)
-                pkt_file.write("{},{},{}\n".format(self.env.now,arrival,size))
-            self.out.put(p) # put the packet in ONU port
+                if self.fix_pkt_size:
+                    p = Packet(self.env.now, 1500, self.packets_sent, src=self.id)
+                    p_list.append(p)
+                    pkt_file.write("{},{},{}\n".format(self.env.now, t_between_evts, self.fix_pkt_size))
+                else:
+                    size = self.size_dist()
+                    p = Packet(self.env.now, size, self.packets_sent, src=self.id)
+                    p_list.append(p)
+                    pkt_file.write("{},{},{}\n".format(self.env.now, t_between_evts, size))
+            self.env.timeout(self.eth_overhead)
+            for p in p_list:
+                self.out.put(p) # put the packet in ONU port
 
 class ONUPort(object):
 
@@ -297,9 +326,9 @@ class ONUPort(object):
                 why_break = "no pkt"
                 break
             self.busy = 1
-            print(self.byte_size)
-            print(pkt.size)
-            print("ONU {}. Pacotes recebidos: {} | Pacotes perdidos: {}".format(self.ONU.oid, self.packets_rec, self.packets_drop))
+            #print(self.byte_size)
+            #print(pkt.size)
+            #print("ONU {}. Pacotes recebidos: {} | Pacotes perdidos: {}".format(self.ONU.oid, self.packets_rec, self.packets_drop))
             self.byte_size -= pkt.size
             if self.byte_size < 0:#Prevent the buffer from being negative
                 logging.debug("{}: Negative buffer".format(self.env.now))
@@ -329,7 +358,6 @@ class ONUPort(object):
 
             else:
                 delay_normal_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
-
 
             end_pkt_usage = self.env.now
             end_grant_usage += end_pkt_usage - start_pkt_usage
@@ -977,13 +1005,13 @@ for seed in SEEDS:
                 if "pd_dba" in FILENAME:
                     FILENAME = FILENAME+"-w{}-p{}".format(parameter['w'], parameter['p'])
                 #abertura de arquivos
-                delay_file = open("pddba_nopred/csv/delay/{}-s{}-delay.csv".format(FILENAME, seed),"w")
-                delay_prediction_file = open("pddba_nopred/csv/delay/{}-s{}-delay_pred.csv".format(FILENAME, seed),"w")
-                delay_normal_file = open("pddba_nopred/csv/delay/{}-s{}-delay_normal.csv".format(FILENAME, seed),"w")
-                grant_time_file = open("pddba_nopred/csv/grant_time/{}-s{}-grant_time.csv".format(FILENAME, seed),"w")
-                pkt_file = open("pddba_nopred/csv/pkt/{}-s{}-pkt.csv".format(FILENAME, seed),"w")
-                overlap_file = open("pddba_nopred/csv/overlap/{}-s{}-overlap.csv".format(FILENAME, seed),"w")
-                mse_file = open("pddba_nopred/csv/{}-s{}-mse.csv".format(FILENAME, seed), "w")
+                delay_file = open("{}/csv/delay/{}-s{}-delay.csv".format(BASE_DIR, FILENAME, seed),"w")
+                delay_prediction_file = open("{}/csv/delay/{}-s{}-delay_pred.csv".format(BASE_DIR, FILENAME, seed),"w")
+                delay_normal_file = open("{}/csv/delay/{}-s{}-delay_normal.csv".format(BASE_DIR, FILENAME, seed),"w")
+                grant_time_file = open("{}/csv/grant_time/{}-s{}-grant_time.csv".format(BASE_DIR, FILENAME, seed),"w")
+                pkt_file = open("{}/csv/pkt/{}-s{}-pkt.csv".format(BASE_DIR, FILENAME, seed),"w")
+                overlap_file = open("{}/csv/overlap/{}-s{}-overlap.csv".format(BASE_DIR, FILENAME, seed),"w")
+                mse_file = open("{}/csv/{}-s{}-mse.csv".format(BASE_DIR, FILENAME, seed), "w")
 
                 delay_file.write("ONU_id,Grant_counter,delay,pkt_creation_time\n")
                 delay_normal_file.write("ONU_id,Grant_counter,delay,pkt_creation_time\n")
@@ -1001,7 +1029,8 @@ for seed in SEEDS:
                 #Parametros de trafego
                 if TRAFFIC == "poisson":
                     packet_generator = poisson_PG
-                    pg_params = {"adist":functools.partial(random.expovariate, exp), "sdist":None, "fix_pkt_size":pkt_size}
+                    #pg_params = {"adist":functools.partial(random.expovariate, exp), "sdist":None, "fix_pkt_size":pkt_size}
+                    pg_params = {"adist":exp, "sdist":None, "fix_pkt_size":pkt_size}
                 else:
                     packet_generator = CBR_PG
                     pg_params = {"fix_pkt_size":pkt_size} 
@@ -1024,7 +1053,7 @@ for seed in SEEDS:
                 olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], 'ols', NUMBER_OF_ONUs)
                 MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
                 logging.info("Starting Simulator")
-                env.run(until=1) #Tempo de duracao simulado, em Segundos
+                env.run(until=SIMULATION_TIME) #Tempo de duracao simulado, em Segundos
 
                 #Closing files
                 delay_file.close()
