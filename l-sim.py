@@ -12,7 +12,7 @@ from sklearn.multioutput import MultiOutputRegressor
 
 #try de abertura de pastas
 
-BASE_DIR = 'test_poissonPG_IPACT_1'
+BASE_DIR = 'test_poissonPG_IPACT_pred_1'
 SIMULATION_TIME = 5
 
 
@@ -56,23 +56,23 @@ if TRAFFIC == "poisson":
     #exponents = [1160, 1450, 1740, 2030, 2320, 2610, 2900, 3190, 3480, 3770, 4060, 4350]
     
     #tentando ir diretamente por percentuais
-    EXPONENTS = [0.1, 0.2, 0.3, 0.4, 0.5]
+    EXPONENTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
     CPRI_PKT = [768000]
-    SEEDS = [20]
+    SEEDS = [20, 30, 40]
 else:
     EXPONENTS = [0]
     #CPRI_PKT = [768000, 1536000, 3072000, 3840000] #Configurações CPRI 1-4, em Kilobytes
     CPRI_PKT = [768000]
     SEEDS = [20]
 
-DBA_ALG = 'ipact'
+DBA_ALG = 'ipact_pred'
 
 if DBA_ALG == 'ipact':
     PARAMS = [{'w':5, 'p':3}]
 else:
     #melhores valores de MSE apontados pela dissertação de madson para CPRI 1-3 na distância de 20km
     #PARAMS = [{'w':10, 'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3} ]
-    PARAMS = [{'w':10, 'p':3}, {'w':20, 'p':8}]
+    PARAMS = [{'w':10, 'p':3}, {'w':12, 'p':2}, {'w':15, 'p':3}, {'w':5, 'p':2}]
 
 class GrantPredictorReg(object):
     
@@ -161,7 +161,8 @@ class PacketGenerator(object):
 
 class CBR_PG(PacketGenerator):
     """This class represents the Constant Bit Rate packet generation process """
-    def __init__(self,env, id, ONU, fix_pkt_size,interval=0.004):
+    def __init__(self,env, id, ONU, fix_pkt_size, interval=0.004):
+        #interval é equivalente ao hold time
         self.interval = interval
         PacketGenerator.__init__(self,env, id, ONU, fix_pkt_size)
         if fix_pkt_size == 768000:
@@ -187,13 +188,13 @@ class CBR_PG(PacketGenerator):
                 self.packets_sent += 1
                 p = Packet(self.env.now, 1500, self.packets_sent, src=self.id)
                 p_list.append(p)
-                pkt_file.write("{},{},{}\n".format(self.env.now, self.interval, self.fix_pkt_size))
+                pkt_file.write("{},{},{},{}\n".format(self.ONU.oid,self.env.now, self.interval, self.fix_pkt_size))
             self.env.timeout(self.eth_overhead)
             for p in p_list:
                 logging
                 self.out.put(p) # put the packet in ONU port
 
-class poisson_PG(PacketGenerator): #Acho que está com problemas
+class poisson_PG(PacketGenerator):
     """This class represents the poisson distribution packet generation process """
     def __init__(self,env, id, ONU, adist, sdist, fix_pkt_size):
         self.arrivals_dist = adist #packet arrivals distribution
@@ -208,21 +209,29 @@ class poisson_PG(PacketGenerator): #Acho que está com problemas
             self.eth_overhead = 0.00005887
         else:
             self.eth_overhead = 0.00007329
+        
+        #1250 é o número de eventos ao longo de 5s, com base no holding time da CPRI1 (5/0.004)
+        #Distribuição Poisson deveria determinar o número de eventos.
+        #Outra distribuição é mais adequada para determinar o tempo entre eventos.
+        if self.arrivals_dist != None:
+            self.n_events = np.random.poisson(1250*self.arrivals_dist)
+            self.t_between_evts = SIMULATION_TIME/self.n_events
+        else:
+            self.n_events = 1250
+            self.t_between_evts = 0.004
 
     def run(self):
         """The generator function used in simulations.
         """
         #calcula quantos eventos devem ser realizados (pacotes)
-        if self.arrivals_dist != None:
-            n_events = np.random.poisson(3734*self.arrivals_dist)
-            t_between_evts = SIMULATION_TIME/n_events
-        else:
-            n_events = 3734
-            t_between_evts = 0.004
         
         yield self.env.timeout(random.expovariate(100))
         while self.env.now < self.finish:
             # wait for next transmission
+            if self.arrivals_dist != None:
+                t_between_evts = np.random.exponential(self.t_between_evts)
+            else:
+                t_between_evts = 0.004
             yield self.env.timeout(t_between_evts)
             
             #Quebra do pkt_size de byte para bits
@@ -237,12 +246,12 @@ class poisson_PG(PacketGenerator): #Acho que está com problemas
                 if self.fix_pkt_size:
                     p = Packet(self.env.now, 1500, self.packets_sent, src=self.id)
                     p_list.append(p)
-                    pkt_file.write("{},{},{}\n".format(self.env.now, t_between_evts, self.fix_pkt_size))
+                    pkt_file.write("{},{},{},{}\n".format(self.ONU.oid, self.env.now, t_between_evts, self.fix_pkt_size))
                 else:
                     size = self.size_dist()
                     p = Packet(self.env.now, size, self.packets_sent, src=self.id)
                     p_list.append(p)
-                    pkt_file.write("{},{},{}\n".format(self.env.now, t_between_evts, size))
+                    pkt_file.write("{},{},{},{}\n".format(self.ONU.oid,self.env.now, t_between_evts, size))
             self.env.timeout(self.eth_overhead)
             for p in p_list:
                 self.out.put(p) # put the packet in ONU port
@@ -373,7 +382,7 @@ class ONUPort(object):
             yield self.grant_real_usage.put([start_grant_usage , start_grant_usage + end_grant_usage])
         else:
             #print (why_break)
-            logging.debug("buffer_size:{}, grant duration:{}".format(self.buffer.get(), grant_timeout))
+            #logging.debug("buffer_size:{}, grant duration:{}".format(self.buffer.get(), grant_timeout))
             yield self.grant_real_usage.put([])# send a empty list
 
     def run(self): #run the port as a simpy process
@@ -566,7 +575,7 @@ class IPACT(DBA):
             # timeout until the end of grant to then get next grant request
             yield self.env.timeout(delay + grant_time + self.guard_interval)
 
-class PD_DBA_NEW(DBA):
+class IPACT_Pred(DBA):
     def __init__(self, env, max_grant_size, grant_store, window=20, predict=5, model="ols"):
         DBA.__init__(self, env, max_grant_size, grant_store)
         self.counter = simpy.Resource(self.env, capacity=1)#create a queue of requests to DBA
@@ -582,9 +591,90 @@ class PD_DBA_NEW(DBA):
         #Prediction model selection
         if model == "ols":
             reg = linear_model.LinearRegression()
+        elif model == 'lasso':
+            reg = linear_model.Lasso(alpha=0.1)
         else:
-            reg = linear_model.Ridge(alpha=0.5)
+            reg = linear_model.Ridge(alpha=0.25)
         self.model = MultiOutputRegressor(reg)
+
+    def predictor(self, ONU):
+        
+        #check if there's enough Grants to fill predictions' window
+        if len(self.grant_history[ONU.oid]['start']) >= self.window:
+            #pick up the last 'x' Grants to fill the window
+            self.grant_history[ONU.oid]['start'] = self.grant_history[ONU.oid]['start'][-self.window:]
+            self.grant_history[ONU.oid]['end'] = self.grant_history[ONU.oid]['end'][-self.window:]
+            self.grant_history[ONU.oid]['counter'] = self.grant_history[ONU.oid]['counter'][-self.window:]
+            df_tmp = pd.DataFrame(self.grant_history[ONU.oid]) #temporary dataframe
+
+            x_pred = np.arange(
+                self.grant_history[ONU.oid]['counter'][-1] + 1,
+                self.grant_history[ONU.oid]['counter'][-1] + 1 + self.predict
+            ).reshape(-1,1)
+
+            #model fit
+            self.model.fit(
+                np.array(df_tmp['counter']).reshape(-1,1),
+                df_tmp[['start','end']]
+            )
+            pred = self.model.predict(x_pred)
+
+            predictions = list(pred)
+            predcp = list(predictions)
+
+            j = 1
+            bucket_time = (ONU.bucket*8)/float(10000000000)
+
+            for p in pred[:-1]:
+                for q in predcp[j:]:
+                    if p[1] + NUMBER_OF_ONUs * (ONU.delay + bucket_time) > q[0]:
+                        predictions = None
+                        break
+                j += 1
+            
+            #drop: if there is overlap between standard grant and first prediction
+            if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] + ONU.delay + self.guard_interval) > predictions[0][0]:
+                print("overlap between between standard grant and first prediction")
+                print(predictions)
+                predictions = None
+            
+            #drop if there is overlap within predictions array
+            if predictions is not None:
+
+                if len(self.predictions_list) == 0:
+                    self.predictions_list += predictions
+                else:
+                    self.predictions_list = list(filter(lambda x: x[0] > self.env.now, self.predictions_list))
+                    predcp = list(predictions)
+                    new_pred = []
+                    drop = False
+                    for interval_1 in predcp:
+                        for interval_2 in self.predictions_list:
+                            if interval_1[1] > interval_2[0]:
+                                if interval_1[0] < interval_2[0]:
+                                    drop = True
+                                    break
+
+                            if interval_1[0] < interval_2[1]:
+                                if interval_1[1] > interval_2[1]:
+                                    drop = True
+                                    break
+                        if drop == False:
+                            new_pred.append(interval_1)
+                        else:
+                            break
+                    if len(new_pred) > 0:
+                        predictions = new_pred
+                        self.predictions_list += predictions
+                        self.predictions_list = sorted(self.predictions_list, key=lambda x: x[0])
+                    else:
+                        print('overlap within predictions array')
+                        print(predictions)
+                        predictions = None
+            
+            return predictions
+        else:
+            return None
 
     def dba(self,ONU,buffer_size):
         with self.counter.request() as my_turn:
@@ -593,25 +683,55 @@ class PD_DBA_NEW(DBA):
             time_stamp = self.env.now # timestamp dba starts processing the request
             delay = ONU.delay # oneway delay
 
+            if len(ONU.grant_report) > 0:
+                #if predictions where utilized, update history with real grant usage
+                for report in ONU.grant_report:
+                    self.grant_history[ONU.oid]['start'].append(report[0])
+                    self.grant_history[ONU.oid]['end'].append(report[1])
+                    self.grant_history[ONU.oid]['counter'].append(self.grant_history[ONU.oid]['counter'][-1] + 1)
+
             # check if max grant size is enabled
-            if self.max_grant_size > 0 and buffer_size > self.max_grant_size:
+            if (self.max_grant_size > 0) and (buffer_size > self.max_grant_size):
                 buffer_size = self.max_grant_size
             bits = buffer_size * 8
             sending_time = 	bits/float(10000000000) #buffer transmission time
             grant_time = delay + sending_time
             grant_final_time = self.env.now + grant_time # timestamp for grant end
             counter = Grant_ONU_counter[ONU.oid] # Grant message counter per ONU
+            
+            #Update grant history with requested grants
+            if len(self.predictions_list) > 0:
+                self.predictions_list = list(filter(lambda x: x[0] > self.env.now, self.predictions_list))
+
+                if len(self.predictions_list) > 0:
+                    if (grant_final_time + ONU.delay + self.guard_interval) > self.predictions_list[0][0]:
+                        bits = ONU.bucket * 8
+                        sending_time = bits/float(10000000000)
+                        grant_time = delay + sending_time
+                        grant_final_time = self.env.now + grant_time
+
+            self.grant_history[ONU.oid]['start'].append(self.env.now)
+            self.grant_history[ONU.oid]['end'].append(grant_final_time)
+            if len (self.grant_history[ONU.oid]['counter']) > 0:
+                self.grant_history[ONU.oid]['counter'].append(self.grant_history[ONU.oid]['counter'][-1] + 1)
+            else:
+                self.grant_history[ONU.oid]['counter'].append(1)
+            #time import time
+            #bfr_pred = time()
+            #Call Predictor
+            #bfr_pred = self.env.now
+            predictions = self.predictor(ONU)
+            #print("{} seconds".format(self.env.now - bfr_pred))
             # write grant log
             grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
+            
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
 
             # timeout until the end of grant to then get next grant request
-            yield self.env.timeout(delay+grant_time + self.guard_interval)
-    
-    pass
+            yield self.env.timeout(delay+ grant_time + self.guard_interval)
 
 #proximo teste enviar listas vazias para ver se fica igual a ipact.
 class PD_DBA(DBA):
@@ -964,6 +1084,8 @@ class OLT(object):
             self.dba = PD_DBA(self.env, max_grant_size, self.grant_store,window,predict,model)
         elif dba == 'mpd_dba':
             self.dba = MPD_DBA(self.env, max_grant_size, self.grant_store,window,predict,model)
+        elif dba == 'ipact_pred':
+            self.dba = IPACT_Pred(self.env, max_grant_size, self.grant_store, window, predict, model)
         else:
             self.dba = IPACT(self.env, max_grant_size, self.grant_store)
 
@@ -1002,7 +1124,7 @@ for seed in SEEDS:
         for pkt_size in CPRI_PKT:
             for parameter in PARAMS:
                 FILENAME = "{}-dist{}-{}ONUs-{}OLTs-{}-exp{}-pkt{}".format(DBA_ALG,DISTANCE,NUMBER_OF_ONUs, NUMBER_OF_OLTs, TRAFFIC, exp, pkt_size)
-                if "pd_dba" in FILENAME:
+                if "pd_dba" or 'ipact_pred' in FILENAME:
                     FILENAME = FILENAME+"-w{}-p{}".format(parameter['w'], parameter['p'])
                 #abertura de arquivos
                 delay_file = open("{}/csv/delay/{}-s{}-delay.csv".format(BASE_DIR, FILENAME, seed),"w")
@@ -1017,12 +1139,13 @@ for seed in SEEDS:
                 delay_normal_file.write("ONU_id,Grant_counter,delay,pkt_creation_time\n")
                 delay_prediction_file.write("ONU_id,Grant_counter,delay,pkt_creation_time\n")
                 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
-                pkt_file.write("timestamp,adist,size\n")
+                pkt_file.write("ONU_id,timestamp,adist,size\n")
                 overlap_file.write("interval\n")
                 mse_file.write("mse_start,mse_end,delay\n")
 
                 #inicio de execução
                 random.seed(seed)
+                np.random.seed(seed)
                 env = simpy.Environment()
                 odn = ODN(env, NUMBER_OF_ONUs, NUMBER_OF_OLTs)
                 
@@ -1050,7 +1173,7 @@ for seed in SEEDS:
                     )
 
                 #OLT creation
-                olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], 'ols', NUMBER_OF_ONUs)
+                olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], 'ridge', NUMBER_OF_ONUs)
                 MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
                 logging.info("Starting Simulator")
                 env.run(until=SIMULATION_TIME) #Tempo de duracao simulado, em Segundos
