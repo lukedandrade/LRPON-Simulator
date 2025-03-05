@@ -6,13 +6,16 @@ import numpy as np
 import pandas as pd
 import logging
 import os, errno
-from sklearn import linear_model
+from sklearn import linear_model, neural_network, tree
 from sklearn.metrics import mean_squared_error as mse
 from sklearn.multioutput import MultiOutputRegressor
+#import tensorflow as tf
+#from tensorflow.python.keras.models import Sequential
+#from tensorflow.python.keras.layers import LSTM, Dense
 
 #try de abertura de pastas
 
-BASE_DIR = 'test_poissonPG_IPACT_pred_1'
+BASE_DIR = 'test_poissonPG_IPACT'
 SIMULATION_TIME = 5
 
 
@@ -27,12 +30,22 @@ except OSError as e:
     if e.errno != errno.EEXIST:
         raise
 try:
+    os.makedirs('{}/csv/grant_usage'.format(BASE_DIR))
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+try:
     os.makedirs("{}/csv/pkt".format(BASE_DIR))
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
 try:
     os.makedirs("{}/csv/overlap".format(BASE_DIR))
+except OSError as e:
+    if e.errno != errno.EEXIST:
+        raise
+try:
+    os.makedirs("{}/csv/general_information".format(BASE_DIR))
 except OSError as e:
     if e.errno != errno.EEXIST:
         raise
@@ -44,7 +57,7 @@ logging.basicConfig(filename='l-sim.log',level=logging.DEBUG,format='%(asctime)s
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 NUMBER_OF_OLTs = 1
-NUMBER_OF_ONUs = 3
+NUMBER_OF_ONUs = 1
 DISTANCE = 20 #Distance in kilometers
 TRAFFIC = "poisson"
 
@@ -56,41 +69,26 @@ if TRAFFIC == "poisson":
     #exponents = [1160, 1450, 1740, 2030, 2320, 2610, 2900, 3190, 3480, 3770, 4060, 4350]
     
     #tentando ir diretamente por percentuais
-    EXPONENTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
-    CPRI_PKT = [768000]
-    SEEDS = [20, 30, 40]
+    #EXPONENTS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+    EXPONENTS = [0.01, 0.05, 0.1, 0.15, 0.20, 0.25, 0.30, 0.35, 0.5, 0.7, 0.9, 0.99] #0.1, 0.3, 0.5, 0.7, 0.9
+    CPRI_PKT = [768000, 1536000] #, 1536000
+    SEEDS = [20] #, 30, 40
 else:
     EXPONENTS = [0]
     #CPRI_PKT = [768000, 1536000, 3072000, 3840000] #Configurações CPRI 1-4, em Kilobytes
     CPRI_PKT = [768000]
     SEEDS = [20]
 
-DBA_ALG = 'ipact_pred'
+DBA_ALG = 'ipact'
 
 if DBA_ALG == 'ipact':
     PARAMS = [{'w':5, 'p':3}]
 else:
     #melhores valores de MSE apontados pela dissertação de madson para CPRI 1-3 na distância de 20km
     #PARAMS = [{'w':10, 'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3} ]
+    #PARAMS = [{'w':30, 'p':2}, {'w':20, 'p':2}, {'w':25, 'p':2}, {'w':15, 'p':2}] #params pra MLPred
     PARAMS = [{'w':10, 'p':3}, {'w':12, 'p':2}, {'w':15, 'p':3}, {'w':5, 'p':2}]
-
-class GrantPredictorReg(object):
-    
-    def __init__(self, env, window=20, n_pred=5, model="ols"):
-        self.window = window
-        self.n_pred = n_pred
-        self.grant_history = []
-        self.predictions_array = []
-        for i in range(NUMBER_OF_ONUs):
-            #separação de unidades de treino
-            self.grant_history.insert(i, {'counter': [], 'start': [], 'end': []})
-        #Implementação de modelo
-        if model == "ols":
-            reg = linear_model.LinearRegression()
-        
-        self.model = MultiOutputRegressor(reg)
-
-    pass
+    PARAMS = [{'w':12, 'p':2}]
 
 class ODN(object):
     """This class represents optical distribution Network."""
@@ -270,6 +268,8 @@ class ONUPort(object):
         self.out = None # ONU port output
         self.packets_rec = 0 #received pkt counter
         self.packets_drop = 0 #dropped pkt counter
+        self.packet_loss = 0 #Taxa de pkt loss. pkt_drop/pkt_rec
+        self.pkt_time_limit = 0 #tempo limite para drop de pacote em segundos, 0 indica sem tempo limite
         self.qlimit = qlimit #Buffer queue limit
         self.byte_size = 0  #Current size of the buffer in bytes
         self.busy = 0  # Used to track if a packet is currently being sent
@@ -280,6 +280,7 @@ class ONUPort(object):
 
     def get_current_grant_delay(self):
         return self.current_grant_delay
+    
     def reset_curret_grant_delay(self):
         self.current_grant_delay = []
 
@@ -311,6 +312,7 @@ class ONUPort(object):
         start_grant_usage = None #grant timestamp
         end_grant_usage = 0 #grant timestamp
         why_break = "ok"
+        data_sent = 0
 
         #self.current_grant_delay = []
 
@@ -326,60 +328,64 @@ class ONUPort(object):
                 break
             elif self.pkt is not None:
                 pkt = self.pkt
-                if not start_grant_usage:
-                    start_grant_usage = self.env.now #initialized the real grant usage time
-                start_pkt_usage = self.env.now ##initialized the pkt usage time
+                if ((self.env.now - pkt.time) > self.pkt_time_limit) and (self.pkt_time_limit != 0): #Testo o nível de delay do pacote, caso ele esteja acima de X ms é dropado
+                    self.packets_drop += 1
+                    self.packet_loss = self.packets_drop/self.packets_rec
+                    pkt = None
+                else:
+                    if not start_grant_usage:
+                        start_grant_usage = self.env.now #initialized the real grant usage time
+                    start_pkt_usage = self.env.now ##initialized the pkt usage time
             else:
                 #there is no pkt to be sent
                 logging.debug("{}: there is no packet to be sent".format(self.env.now))
                 why_break = "no pkt"
                 break
-            self.busy = 1
-            #print(self.byte_size)
-            #print(pkt.size)
-            #print("ONU {}. Pacotes recebidos: {} | Pacotes perdidos: {}".format(self.ONU.oid, self.packets_rec, self.packets_drop))
-            self.byte_size -= pkt.size
-            if self.byte_size < 0:#Prevent the buffer from being negative
-                logging.debug("{}: Negative buffer".format(self.env.now))
-                self.byte_size += pkt.size
-                self.buffer.put(pkt)
-                why_break = "negative buffer"
-                break
+            if pkt is not None: #packet was not dropped bcs delay limit
+                self.busy = 1
+                self.byte_size -= pkt.size
+                data_sent += pkt.size
+                bits = pkt.size * 8
+                sending_time = 	bits/float(10000000000) # buffer transmission time
 
-            bits = pkt.size * 8
-            sending_time = 	bits/float(10000000000) # buffer transmission time
+                if self.byte_size < 0:#Prevent the buffer from being negative
+                    logging.debug("{}: Negative buffer".format(self.env.now))
+                    self.byte_size += pkt.size
+                    self.buffer.put(pkt)
+                    why_break = "negative buffer"
+                    break
 
-            #To avoid fragmentation by passing the Grant window
-            if env.now + sending_time > self.grant_final_time + self.guard_interval:
-                self.byte_size += pkt.size
+                #To avoid fragmentation by passing the Grant window
+                if env.now + sending_time > self.grant_final_time + self.guard_interval:
+                    self.byte_size += pkt.size
+                    self.buffer.put(pkt)
+                    why_break = "fragmentation"
+                    break
 
-                self.buffer.put(pkt)
-                why_break = "fragmentation"
-                break
+                #write the pkt transmission delay
+                self.current_grant_delay.append(self.env.now - pkt.time)
+                aux_file.write("{},{}\n".format(self.env.now, self.env.now - pkt.time))
+                yield self.env.timeout(sending_time)
+                delay_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
+                if self.predicted_grant:
+                    delay_prediction_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
+                else:
+                    delay_normal_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
 
-            #write the pkt transmission delay
-            self.current_grant_delay.append(self.env.now - pkt.time)
-            yield self.env.timeout(sending_time)
-            #if ((self.env.now - pkt.time)+self.ONU.delay) >= 1:
-            delay_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
-            if self.predicted_grant:
-                delay_prediction_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
+                end_pkt_usage = self.env.now
+                end_grant_usage += end_pkt_usage - start_pkt_usage
 
+                self.pkt = None
             else:
-                delay_normal_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
-
-            end_pkt_usage = self.env.now
-            end_grant_usage += end_pkt_usage - start_pkt_usage
-
-            self.pkt = None
-
+                logging.debug("Packet created at {} lost because it was over the delay limit at {}.".format(self.pkt.time, self.env.now))
+        
         #ending of the grant
         self.grant_loop = False #flag if grant time is being used
 
         if start_grant_usage and end_grant_usage > 0:# if any pkt has been sent
             #send the real grant usage
             yield self.env.timeout(self.ONU.delay) # propagation delay
-            yield self.grant_real_usage.put([start_grant_usage , start_grant_usage + end_grant_usage])
+            yield self.grant_real_usage.put([start_grant_usage , start_grant_usage + end_grant_usage, self.packet_loss, data_sent, self.byte_size])
         else:
             #print (why_break)
             #logging.debug("buffer_size:{}, grant duration:{}".format(self.buffer.get(), grant_timeout))
@@ -401,10 +407,11 @@ class ONUPort(object):
             return self.buffer.put(pkt)
         if tmp >= self.qlimit: # chcks if the queue is full
             self.packets_drop += 1
+            self.packet_loss = self.packets_drop/self.packets_rec
             #return
         else:
             self.byte_size = tmp
-            self.buffer.put(pkt)
+            return self.buffer.put(pkt)
 
 class ONU(object):
     def __init__(self,distance,oid,env,lamb,channel,odn,qlimit,bucket,packet_gen,pg_param):
@@ -432,8 +439,7 @@ class ONU(object):
         self.receiver = self.env.process(self.ONU_receiver(odn))
         self.bucket = bucket #Bucket size
         self.lamb = lamb # wavelength lambda
-
-
+        
     def ONU_receiver(self,odn):
         while True:
             # Grant stage
@@ -444,6 +450,8 @@ class ONU(object):
                 next_grant = grant['grant_start_time'] - self.env.now #time until next grant begining
                 yield self.env.timeout(next_grant)  #wait for the next grant
             except Exception as e:
+                #print("rly?")
+                #print(e)
                 pass
 
             self.excess = self.last_req_buffer - grant['grant_size'] #update the excess
@@ -462,10 +470,15 @@ class ONU(object):
                 logging.debug("Error in grant_usage")
             else:
                 logging.debug("Grant Usage: {}".format(grant_usage))
+                #adicionar um write para um csv de grant usage
+                grant_usage_file.write("{},{},{},{},{},{},{},{}\n".format(self.oid, MAC_TABLE['olt'], MAC_TABLE[self.oid],False,
+                                                              grant_usage[0], grant_usage[1], grant_usage[3], grant_usage[4]))
+            
             # Prediction stage
+            #missao: colocar registro desses grants
             if grant['prediction']:#check if have any predicion in the grant
 
-                print("ONU received predictions - pred: {}".format(grant['prediction']))
+                #print("ONU received predictions - pred: {}".format(grant['prediction']))
 
                 self.port.reset_curret_grant_delay()
                 for pred in grant['prediction']:
@@ -485,17 +498,20 @@ class ONU(object):
                     if self.channel.getchannel() == 0:
                         self.channel.blockchannel(self.oid)
                     else:
-                        print ("{} - COLLISION in Pred".format(self.env.now))
-                    sent_pkt = self.env.process(self.port.send())#sending predicted messages
+                        print("{} - COLLISION in Pred".format(self.env.now))
+                    sent_pkt = self.env.process(self.port.send())#sending messages on the predicted grant
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
                     if len(grant_usage) > 0: # filling grant prediction report list
                         pred_grant_usage_report.append(grant_usage)
-                        #logging.debug("{}:pred={},usage={}".format(self.env.now,pred,grant_usage))
+                        logging.debug("{}:pred={},usage={}".format(self.env.now,pred,grant_usage))
+                        #adicionar write de csv de grant usage
+                        grant_usage_file.write("{},{},{},{},{},{},{},{}\n".format(self.oid, MAC_TABLE['olt'], MAC_TABLE[self.oid],True,
+                                                              grant_usage[0], grant_usage[1], grant_usage[3], grant_usage[4]))
                     else:
                         logging.debug("{}:Error in pred_grant_usage".format(self.env.now))
                         break
-
+                    #grant_time_file.write("{},{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp, counter, ONU.oid, buffer_size, self.env.now, grant_final_time))
             # grant mean squared errors
             if len(pred_grant_usage_report) > 0:
                 delay = self.port.get_current_grant_delay()
@@ -566,9 +582,9 @@ class IPACT(DBA):
             grant_final_time = self.env.now + grant_time # timestamp for grant end
             counter = Grant_ONU_counter[ONU.oid] # Grant message counter per ONU
             # write grant log
-            grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp, counter, ONU.oid,self.env.now,grant_final_time) )
+            grant_time_file.write( "{},{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp, counter, ONU.oid, buffer_size, self.env.now, grant_final_time) )
             # construct grant message
-            grant = {'ONU': ONU, 'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': None}
+            grant = {'ONU': ONU, 'grant_size': buffer_size, 'grant_start_time': self.env.now, 'grant_final_time': grant_final_time, 'prediction': None}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
 
@@ -586,13 +602,26 @@ class IPACT_Pred(DBA):
         
         for i in range(NUMBER_OF_ONUs):
             # training unit
-            self.grant_history.insert(i, {'counter': [], 'start': [], 'end': []})
+            self.grant_history.insert(i, {'counter': [], 'start': [], 'end': [], 'pkt_loss': []})
 
         #Prediction model selection
         if model == "ols":
             reg = linear_model.LinearRegression()
         elif model == 'lasso':
-            reg = linear_model.Lasso(alpha=0.1)
+            reg = linear_model.Lasso(alpha=0.15)
+        elif model == 'mlp':
+            reg = neural_network.MLPRegressor(hidden_layer_sizes=(2,), solver='lbfgs', activation='relu')
+        elif model == 'd_tree':
+            reg = tree.DecisionTreeRegressor(max_depth=5)
+        #elif model == 'lstm':
+        #    reg = Sequential(
+        #        [
+        #            LSTM(3, return_sequences=True),
+        #            LSTM(10, return_sequences=True),
+        #            Dense(1)
+        #        ]
+        #    )
+        #    pass
         else:
             reg = linear_model.Ridge(alpha=0.25)
         self.model = MultiOutputRegressor(reg)
@@ -605,18 +634,23 @@ class IPACT_Pred(DBA):
             self.grant_history[ONU.oid]['start'] = self.grant_history[ONU.oid]['start'][-self.window:]
             self.grant_history[ONU.oid]['end'] = self.grant_history[ONU.oid]['end'][-self.window:]
             self.grant_history[ONU.oid]['counter'] = self.grant_history[ONU.oid]['counter'][-self.window:]
+            self.grant_history[ONU.oid]['pkt_loss'] = self.grant_history[ONU.oid]['pkt_loss'][-self.window:]
             df_tmp = pd.DataFrame(self.grant_history[ONU.oid]) #temporary dataframe
-
-            x_pred = np.arange(
-                self.grant_history[ONU.oid]['counter'][-1] + 1,
-                self.grant_history[ONU.oid]['counter'][-1] + 1 + self.predict
-            ).reshape(-1,1)
-
+    
+            aux = []
+            for i in range(self.predict):
+                aux.append([self.grant_history[ONU.oid]['counter'][-1] + 1 + i, self.grant_history[ONU.oid]['pkt_loss'][-1]])
+            x_pred = np.array(aux).reshape(-1,2)
+            #x_pred = np.arange(
+            #    self.grant_history[ONU.oid]['counter'][-1] + 1,
+            #    self.grant_history[ONU.oid]['counter'][-1] + 1 + self.predict
+            #).reshape(-1,1)
             #model fit
             self.model.fit(
-                np.array(df_tmp['counter']).reshape(-1,1),
+                np.array(df_tmp[['counter', 'pkt_loss']]).reshape(-1,2),
                 df_tmp[['start','end']]
             )
+
             pred = self.model.predict(x_pred)
 
             predictions = list(pred)
@@ -634,8 +668,8 @@ class IPACT_Pred(DBA):
             
             #drop: if there is overlap between standard grant and first prediction
             if predictions is not None and (self.grant_history[ONU.oid]['end'][-1] + ONU.delay + self.guard_interval) > predictions[0][0]:
-                print("overlap between between standard grant and first prediction")
-                print(predictions)
+                #print("overlap between between standard grant and first prediction")
+                #print(predictions)
                 predictions = None
             
             #drop if there is overlap within predictions array
@@ -689,6 +723,7 @@ class IPACT_Pred(DBA):
                     self.grant_history[ONU.oid]['start'].append(report[0])
                     self.grant_history[ONU.oid]['end'].append(report[1])
                     self.grant_history[ONU.oid]['counter'].append(self.grant_history[ONU.oid]['counter'][-1] + 1)
+                    self.grant_history[ONU.oid]['pkt_loss'].append(report[2])
 
             # check if max grant size is enabled
             if (self.max_grant_size > 0) and (buffer_size > self.max_grant_size):
@@ -712,6 +747,7 @@ class IPACT_Pred(DBA):
 
             self.grant_history[ONU.oid]['start'].append(self.env.now)
             self.grant_history[ONU.oid]['end'].append(grant_final_time)
+            self.grant_history[ONU.oid]['pkt_loss'].append(ONU.port.packet_loss)
             if len (self.grant_history[ONU.oid]['counter']) > 0:
                 self.grant_history[ONU.oid]['counter'].append(self.grant_history[ONU.oid]['counter'][-1] + 1)
             else:
@@ -723,17 +759,16 @@ class IPACT_Pred(DBA):
             predictions = self.predictor(ONU)
             #print("{} seconds".format(self.env.now - bfr_pred))
             # write grant log
-            grant_time_file.write( "{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp,counter, ONU.oid,self.env.now,grant_final_time) )
+            grant_time_file.write("{},{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp, counter, ONU.oid, buffer_size, self.env.now, grant_final_time))
             
             # construct grant message
-            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_final_time': grant_final_time, 'prediction': predictions}
+            grant = {'ONU':ONU,'grant_size': buffer_size, 'grant_start_time': self.env.now, 'grant_final_time': grant_final_time, 'prediction': predictions}
             self.grant_store.put(grant) # send grant to OLT
             Grant_ONU_counter[ONU.oid] += 1
 
             # timeout until the end of grant to then get next grant request
-            yield self.env.timeout(delay+ grant_time + self.guard_interval)
+            yield self.env.timeout(delay + grant_time + self.guard_interval)
 
-#proximo teste enviar listas vazias para ver se fica igual a ipact.
 class PD_DBA(DBA):
     def __init__(self,env,max_grant_size,grant_store,window=20,predict=5,model="ols"):
         DBA.__init__(self,env,max_grant_size,grant_store)
@@ -1120,28 +1155,38 @@ class collisionDetection(object):
             self.chanel = 0
 
 for seed in SEEDS:
+    info_file = open("{}/csv/general_information/infos-s{}.csv".format(BASE_DIR, seed), "w")
+    info_file.write("Seed,Exponent,pkt_size,w-p,DBA_ALG,n_ONUS,n_OLTs,pkt_loss\n")
     for exp in EXPONENTS:
         for pkt_size in CPRI_PKT:
             for parameter in PARAMS:
                 FILENAME = "{}-dist{}-{}ONUs-{}OLTs-{}-exp{}-pkt{}".format(DBA_ALG,DISTANCE,NUMBER_OF_ONUs, NUMBER_OF_OLTs, TRAFFIC, exp, pkt_size)
-                if "pd_dba" or 'ipact_pred' in FILENAME:
+                if DBA_ALG == 'ipact_pred':
                     FILENAME = FILENAME+"-w{}-p{}".format(parameter['w'], parameter['p'])
                 #abertura de arquivos
                 delay_file = open("{}/csv/delay/{}-s{}-delay.csv".format(BASE_DIR, FILENAME, seed),"w")
                 delay_prediction_file = open("{}/csv/delay/{}-s{}-delay_pred.csv".format(BASE_DIR, FILENAME, seed),"w")
                 delay_normal_file = open("{}/csv/delay/{}-s{}-delay_normal.csv".format(BASE_DIR, FILENAME, seed),"w")
                 grant_time_file = open("{}/csv/grant_time/{}-s{}-grant_time.csv".format(BASE_DIR, FILENAME, seed),"w")
+                #grant_time_prediction_file = open("{}/csv/grant_time/{}-s{}-grant_time_pred.csv".format(BASE_DIR, FILENAME, seed),"w")
+                grant_usage_file = open("{}/csv/grant_usage/{}-s{}-grant_usage.csv".format(BASE_DIR, FILENAME, seed),"w")
                 pkt_file = open("{}/csv/pkt/{}-s{}-pkt.csv".format(BASE_DIR, FILENAME, seed),"w")
                 overlap_file = open("{}/csv/overlap/{}-s{}-overlap.csv".format(BASE_DIR, FILENAME, seed),"w")
                 mse_file = open("{}/csv/{}-s{}-mse.csv".format(BASE_DIR, FILENAME, seed), "w")
-
+                aux_file = open("{}/csv/{}-s{}-delay_line.csv".format(BASE_DIR, FILENAME, seed), "w")
+                #info_file = open("{}/csv/general_information/{}-s{}.csv".format(BASE_DIR, FILENAME, seed), "w")
+                
                 delay_file.write("ONU_id,Grant_counter,delay,pkt_creation_time\n")
                 delay_normal_file.write("ONU_id,Grant_counter,delay,pkt_creation_time\n")
                 delay_prediction_file.write("ONU_id,Grant_counter,delay,pkt_creation_time\n")
-                grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,start,end\n")
+                grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,grant_size,start,end\n")
+                #grant_time_prediction_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,grant_size,start,end\n")
+                grant_usage_file.write("ONU_id,source address,destination address,predicted,start,end,data sent,remaining data\n")
                 pkt_file.write("ONU_id,timestamp,adist,size\n")
                 overlap_file.write("interval\n")
                 mse_file.write("mse_start,mse_end,delay\n")
+                aux_file.write("timestamp,delay\n")
+                #info_file.write("Seed,Exponent,pkt_size,w-p,DBA_ALG,n_ONUS,n_OLTs,pkt_loss\n")
 
                 #inicio de execução
                 random.seed(seed)
@@ -1168,16 +1213,22 @@ for seed in SEEDS:
                     Grant_ONU_counter[i] = 0
 
                 for i in range(NUMBER_OF_ONUs):
+                    #Qlimit= n_pkts*1500, tá em bytes
                     ONU_list.append(
-                        ONU(DISTANCE, i, env, lamb, channel, odn, 0, 9000, packet_generator, pg_params)
+                        ONU(DISTANCE, i, env, lamb, channel, odn, pkt_size*0.95, 9000, packet_generator, pg_params)
                     )
 
                 #OLT creation
-                olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], 'ridge', NUMBER_OF_ONUs)
+                olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], 'ols', NUMBER_OF_ONUs)
                 MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
                 logging.info("Starting Simulator")
                 env.run(until=SIMULATION_TIME) #Tempo de duracao simulado, em Segundos
-
+                aux_txt = ''
+                for onu in ONU_list:
+                    pkt_loss = onu.port.packet_loss
+                    aux_txt += "ONU {}-{} | ".format(onu.oid, pkt_loss)
+                info_file.write("{},{},{},{}-{},{},{},{},{}\n".format(seed, exp, pkt_size, parameter['w'], parameter['p'],
+                                                                 DBA_ALG, NUMBER_OF_ONUs, NUMBER_OF_OLTs,aux_txt))
                 #Closing files
                 delay_file.close()
                 delay_normal_file.close()
@@ -1186,3 +1237,5 @@ for seed in SEEDS:
                 pkt_file.close()
                 overlap_file.close()
                 mse_file.close()
+                aux_file.close()
+    info_file.close()
