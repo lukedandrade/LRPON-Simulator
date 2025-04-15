@@ -19,7 +19,7 @@ loads = [768000, 1536000, 3072000]
 CPRI_PKT = ['768000', '1536000', '3072000']
 
 seeds = [20]
-parameters = [{'w':10,'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3}, {'w':5, 'p':3}]
+parameters = [{'w':10, 'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3}]
 
 for param in parameters:
     PD_DBA['{}-{}'.format(param['w'],param['p'])] = {}
@@ -47,7 +47,7 @@ for param in parameters :
         pd_dba_msestart = []
         pd_dba_mseend = []
         for seed in seeds:
-            df_tmp = pd.read_csv("csv/PD_DBA-dist{}-3ONUs-1OLTs-CBR_PG-exp0-pkt{}-w{}-p{}-s{}-mse.csv".format(
+            df_tmp = pd.read_csv("b_9000_t5/csv/PD_DBA-dist{}-3ONUs-1OLTs-CBR_PG-exp0-pkt{}-w{}-p{}-s{}-mse.csv".format(
                     20, payload_size, param['w'], param['p'], seed)
             )
             pd_dba_msestart.append(df_tmp['mse_start'])
@@ -60,10 +60,10 @@ pd_dba_df = pd.DataFrame(PD_DBA)
 #creating figure
 plt.figure()
 
-title = "STD CBR (20km) - Predições Grant End"#figure title from argument
+title = "STD CBR (20km) - Predições Grant End - Executado no Servidor (bucket=9000, t=5)"#figure title from argument
 plt.title(title)
 plt.xlabel("Payload (bytes)")
-plt.ylabel("Standard Deviation")
+plt.ylabel("Mean Squared error")
 
 number = 4
 cmap = plt.get_cmap('gnuplot')

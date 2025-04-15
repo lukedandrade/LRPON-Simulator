@@ -15,11 +15,11 @@ except OSError as e:
 IPACT = {}
 PD_DBA = {}
 MPD_DBA = {}
-loads = [768000, 1536000, 3072000]
-CPRI_PKT = ['768000', '1536000', '3072000']
+loads = [768000, 1536000]
+CPRI_PKT = ['768000', '1536000']
 
 seeds = [20]
-parameters = [{'w':10,'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3}, {'w':5, 'p':3}]
+parameters = [{'w':10, 'p':3}, {'w':20, 'p':8}]
 
 for param in parameters:
     PD_DBA['{}-{}'.format(param['w'],param['p'])] = {}
@@ -30,7 +30,7 @@ for param in parameters:
 for payload_size in CPRI_PKT:
     ipact = []
     for seed in seeds:
-        df_tmp = pd.read_csv("csv/delay/IPACT-dist{}-3ONUs-1OLTs-CBR_PG-exp0-pkt{}-s{}-delay.csv".format(20, payload_size, seed))
+        df_tmp = pd.read_csv("pddba_nopred/csv/delay/IPACT-dist{}-3ONUs-1OLTs-CBR_PG-exp0-pkt{}-s{}-delay.csv".format(20, payload_size, seed))
         ipact.append(df_tmp['delay'].mean()*1000)
     IPACT[payload_size] = [np.mean(ipact),np.std(ipact)]
 
@@ -42,7 +42,7 @@ for param in parameters :
     for payload_size in CPRI_PKT:
         pd_dba = []
         for seed in seeds:
-            df_tmp = pd.read_csv("csv/delay/PD_DBA-dist{}-3ONUs-1OLTs-CBR_PG-exp0-pkt{}-w{}-p{}-s{}-delay.csv".format(
+            df_tmp = pd.read_csv("pddba_nopred/csv/delay/PD_DBA-dist{}-3ONUs-1OLTs-CBR_PG-exp0-pkt{}-w{}-p{}-s{}-delay.csv".format(
                     20, payload_size, param['w'], param['p'], seed))
             pd_dba.append(df_tmp['delay'].mean()*1000)
         PD_DBA['{}-{}'.format(param['w'],param['p'])][payload_size] = [np.mean(pd_dba),np.std(pd_dba)]
@@ -67,7 +67,7 @@ print(pd_dba_df)
 #creating figure
 plt.figure()
 
-title = "Teste CBR (20km) - 3 ONUS - OLS - EXTRA"#figure title from argument
+title = "Teste - CBR (20km) - 3 ONUS - OLS - predições=None"#figure title from argument
 plt.title(title)
 plt.xlabel("Payload (bytes)")
 plt.ylabel("Delay (ms)")
