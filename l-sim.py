@@ -18,36 +18,37 @@ from sklearn.multioutput import MultiOutputRegressor
 BASE_DIR = 'test_poissonPG_IPACT_pred_ols'
 SIMULATION_TIME = 5
 
-try:
-    os.makedirs('{}/csv/delay'.format(BASE_DIR))
-except OSError as e:
-    if e.errno != errno.EEXIST:
-        raise
-try:
-    os.makedirs('{}/csv/grant_time'.format(BASE_DIR))
-except OSError as e:
-    if e.errno != errno.EEXIST:
-        raise
-try:
-    os.makedirs('{}/csv/grant_usage'.format(BASE_DIR))
-except OSError as e:
-    if e.errno != errno.EEXIST:
-        raise
-try:
-    os.makedirs("{}/csv/pkt".format(BASE_DIR))
-except OSError as e:
-    if e.errno != errno.EEXIST:
-        raise
-try:
-    os.makedirs("{}/csv/overlap".format(BASE_DIR))
-except OSError as e:
-    if e.errno != errno.EEXIST:
-        raise
-try:
-    os.makedirs("{}/csv/general_information".format(BASE_DIR))
-except OSError as e:
-    if e.errno != errno.EEXIST:
-        raise
+def openDirectories(payload_size, b_dir):
+    try:
+        os.makedirs('{}/{}/csv/delay'.format(b_dir, payload_size))
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
+    try:
+        os.makedirs('{}/{}/csv/grant_time'.format(b_dir, payload_size))
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
+    try:
+        os.makedirs('{}/{}/csv/grant_usage'.format(b_dir, payload_size))
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
+    try:
+        os.makedirs("{}/{}/csv/pkt".format(b_dir, payload_size))
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
+    try:
+        os.makedirs("{}/{}/csv/overlap".format(b_dir, payload_size))
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
+    try:
+        os.makedirs("{}/{}/csv/general_information".format(b_dir, payload_size))
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise
 
 #inicialização de log
 logging.basicConfig(filename='l-sim.log',level=logging.DEBUG,format='%(asctime)s %(message)s')
@@ -90,6 +91,9 @@ else:
     #PARAMS = [{'w':30, 'p':2}, {'w':20, 'p':2}, {'w':25, 'p':2}, {'w':15, 'p':2}] #params pra MLPred
     PARAMS = [{'w':10, 'p':3}, {'w':12, 'p':2}, {'w':15, 'p':3}, {'w':5, 'p':2}]
     PARAMS = [{'w':12, 'p':1}]
+
+for payload in CPRI_PKT:
+    openDirectories(payload, BASE_DIR)
 
 class ODN(object):
     """This class represents optical distribution Network."""
@@ -373,7 +377,7 @@ class ONUPort(object):
                     grant_type = 'normal'
                     delay_normal_file.write( "{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time))
                 delay_file.write( "{},{},{},{},{}\n".format(self.ONU.oid, Grant_ONU_counter[self.ONU.oid]-1, (self.env.now - pkt.time)+self.ONU.delay, pkt.time, grant_type))
-                aux_file.write("{},{},{}\n".format(self.env.now, self.env.now - pkt.time, grant_type))
+                #aux_file.write("{},{},{}\n".format(self.env.now, self.env.now - pkt.time, grant_type))
                 end_pkt_usage = self.env.now
                 end_grant_usage += end_pkt_usage - start_pkt_usage
 
@@ -1183,16 +1187,16 @@ for seed in SEEDS:
                 if DBA_ALG == 'ipact_pred':
                     FILENAME = FILENAME+"-w{}-p{}".format(parameter['w'], parameter['p'])
                 #abertura de arquivos
-                delay_file = open("{}/csv/delay/{}-s{}-delay.csv".format(BASE_DIR, FILENAME, seed),"w")
-                delay_prediction_file = open("{}/csv/delay/{}-s{}-delay_pred.csv".format(BASE_DIR, FILENAME, seed),"w")
-                delay_normal_file = open("{}/csv/delay/{}-s{}-delay_normal.csv".format(BASE_DIR, FILENAME, seed),"w")
-                grant_time_file = open("{}/csv/grant_time/{}-s{}-grant_time.csv".format(BASE_DIR, FILENAME, seed),"w")
+                delay_file = open("{}/{}/csv/delay/{}-s{}-delay.csv".format(BASE_DIR, pkt_size, FILENAME, seed),"w")
+                delay_prediction_file = open("{}/{}/csv/delay/{}-s{}-delay_pred.csv".format(BASE_DIR, pkt_size,FILENAME, seed),"w")
+                delay_normal_file = open("{}/{}/csv/delay/{}-s{}-delay_normal.csv".format(BASE_DIR, pkt_size, FILENAME, seed),"w")
+                grant_time_file = open("{}/{}/csv/grant_time/{}-s{}-grant_time.csv".format(BASE_DIR, pkt_size, FILENAME, seed),"w")
                 #grant_time_prediction_file = open("{}/csv/grant_time/{}-s{}-grant_time_pred.csv".format(BASE_DIR, FILENAME, seed),"w")
-                grant_usage_file = open("{}/csv/grant_usage/{}-s{}-grant_usage.csv".format(BASE_DIR, FILENAME, seed),"w")
-                pkt_file = open("{}/csv/pkt/{}-s{}-pkt.csv".format(BASE_DIR, FILENAME, seed),"w")
-                overlap_file = open("{}/csv/overlap/{}-s{}-overlap.csv".format(BASE_DIR, FILENAME, seed),"w")
-                mse_file = open("{}/csv/{}-s{}-mse.csv".format(BASE_DIR, FILENAME, seed), "w")
-                aux_file = open("{}/csv/{}-s{}-delay_line.csv".format(BASE_DIR, FILENAME, seed), "w")
+                grant_usage_file = open("{}/{}/csv/grant_usage/{}-s{}-grant_usage.csv".format(BASE_DIR, pkt_size, FILENAME, seed),"w")
+                pkt_file = open("{}/{}/csv/pkt/{}-s{}-pkt.csv".format(BASE_DIR, pkt_size, FILENAME, seed),"w")
+                overlap_file = open("{}/{}/csv/overlap/{}-s{}-overlap.csv".format(BASE_DIR, pkt_size, FILENAME, seed),"w")
+                mse_file = open("{}/{}/csv/{}-s{}-mse.csv".format(BASE_DIR, pkt_size, FILENAME, seed), "w")
+                #aux_file = open("{}/csv/{}-s{}-delay_line.csv".format(BASE_DIR, FILENAME, seed), "w")
                 #info_file = open("{}/csv/general_information/{}-s{}.csv".format(BASE_DIR, FILENAME, seed), "w")
                 
                 delay_file.write("ONU_id,Grant_counter,delay,pkt_creation_time,grant_type\n")
@@ -1204,7 +1208,7 @@ for seed in SEEDS:
                 pkt_file.write("ONU_id,timestamp,adist,size\n")
                 overlap_file.write("interval\n")
                 mse_file.write("mse_start,mse_end,delay\n")
-                aux_file.write("timestamp,delay,grant_type\n")
+                #aux_file.write("timestamp,delay,grant_type\n")
                 #info_file.write("Seed,Exponent,pkt_size,w-p,DBA_ALG,n_ONUS,n_OLTs,pkt_loss\n")
 
                 #inicio de execução
@@ -1256,5 +1260,5 @@ for seed in SEEDS:
                 pkt_file.close()
                 overlap_file.close()
                 mse_file.close()
-                aux_file.close()
+                #aux_file.close()
     info_file.close()
