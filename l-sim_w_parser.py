@@ -1,11 +1,12 @@
 import simpy
 import random
 import functools
-import time
+import datetime
 import numpy as np
 import pandas as pd
 import logging
 import os, errno
+import argparse
 from sklearn import linear_model, neural_network, tree
 from sklearn.metrics import mean_squared_error as mse
 from sklearn.metrics import r2_score as r2
@@ -15,9 +16,26 @@ from sklearn.multioutput import MultiOutputRegressor
 #from tensorflow.python.keras.models import Sequential
 #from tensorflow.python.keras.layers import LSTM, Dense
 
-#try de abertura de pastas
+parser = argparse.ArgumentParser()
+parser.add_argument("A", type=str, default='ipact', choices=["ipact", "ipact_pred"], help="DBA algorithm")
+parser.add_argument("-O", "--onu", type=int, default=5, help="The number of ONUs")
+parser.add_argument("-M", "--model", type=str, default='ols', choices=["ols","ridge", "lasso", "mlp"], help="IPACT_pred prediction model")
+args = parser.parse_args()
 
-BASE_DIR = 'test_poissonPG_IPACT_pred_mlp'
+
+MODEL = args.model
+DBA_ALG = args.A
+NUMBER_OF_ONUs = args.onu
+
+#try de abertura de pastas
+if DBA_ALG == 'ipact':
+    PARAMS = [{'w':5, 'p':3}]
+    BASE_DIR = 'test_poissonPG_IPACT'
+else:
+    #PARAMS = [{'w':30, 'p':2}, {'w':20, 'p':2}, {'w':25, 'p':2}, {'w':15, 'p':2}] #params pra MLPred
+    #PARAMS = [{'w':10, 'p':3}, {'w':12, 'p':2}, {'w':15, 'p':3}, {'w':5, 'p':2}]
+    PARAMS = [{'w':12, 'p':1}]
+    BASE_DIR = 'test_poissonPG_IPACT_pred_{}'.format(MODEL)
 SIMULATION_TIME = 5
 
 #inicialização de log
@@ -27,7 +45,7 @@ logging.basicConfig(filename='l-sim.log',level=logging.DEBUG,format='%(asctime)s
 MAC_TABLE = {}
 Grant_ONU_counter = {}
 NUMBER_OF_OLTs = 1
-NUMBER_OF_ONUs = 5
+
 DISTANCE = 20 #Distance in kilometers
 TRAFFIC = "poisson"
 BUCKET_SIZE = 9000
@@ -43,23 +61,12 @@ if TRAFFIC == "poisson":
     #tentando ir diretamente por percentuais
     EXPONENTS = [0.01, 0.05, 0.1, 0.20, 0.30, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99] #  
     CPRI_PKT = [768000, 1536000, 3072000, 3840000] #
-    SEEDS = [20] #, 30, 40
+    SEEDS = [70, 80, 90, 100] #, 30, 40
 else:
     EXPONENTS = [0]
     #CPRI_PKT = [768000, 1536000, 3072000, 3840000] #Configurações CPRI 1-4, em Kilobytes
     CPRI_PKT = [768000]
     SEEDS = [20]
-
-DBA_ALG = 'ipact_pred'
-
-if DBA_ALG == 'ipact':
-    PARAMS = [{'w':5, 'p':3}]
-else:
-    #melhores valores de MSE apontados pela dissertação de madson para CPRI 1-3 na distância de 20km
-    #PARAMS = [{'w':10, 'p':3}, {'w':20, 'p':8}, {'w':15, 'p':3} ]
-    #PARAMS = [{'w':30, 'p':2}, {'w':20, 'p':2}, {'w':25, 'p':2}, {'w':15, 'p':2}] #params pra MLPred
-    PARAMS = [{'w':10, 'p':3}, {'w':12, 'p':2}, {'w':15, 'p':3}, {'w':5, 'p':2}]
-    PARAMS = [{'w':12, 'p':1}]
 
 def openDirectories(payload_size, b_dir):
     try:
@@ -482,7 +489,8 @@ class ONU(object):
             if self.channel.getchannel() == 0:
                 self.channel.blockchannel(self.oid)
             else:
-                print ("{} - COLLISION".format(self.env.now))
+                #print ("{} - COLLISION".format(self.env.now))
+                pass
 
             sent_pkt = self.env.process(self.port.send()) # send pkts during grant time
             yield sent_pkt # wait grant be used
@@ -519,7 +527,8 @@ class ONU(object):
                     if self.channel.getchannel() == 0:
                         self.channel.blockchannel(self.oid)
                     else:
-                        print("{} - COLLISION in Pred".format(self.env.now))
+                        #print("{} - COLLISION in Pred".format(self.env.now))
+                        pass
                     sent_pkt = self.env.process(self.port.send())#sending messages on the predicted grant
                     yield sent_pkt # wait grant be used
                     grant_usage = yield self.port.grant_real_usage.get() # get grant real utilisation
@@ -727,9 +736,9 @@ class IPACT_Pred(DBA):
                         self.predictions_list += predictions
                         self.predictions_list = sorted(self.predictions_list, key=lambda x: x[0])
                     else:
-                        print('overlap within predictions array')
-                        print('new_preds:{}'.format(predictions))
-                        print('dba_pred_list:{}'.format(self.predictions_list))
+                        #print('overlap within predictions array')
+                        #print('new_preds:{}'.format(predictions))
+                        #print('dba_pred_list:{}'.format(self.predictions_list))
                         predictions = None
                         #self.predictions_list = []
             if predictions != None:
@@ -791,7 +800,7 @@ class IPACT_Pred(DBA):
             #Call Predictor
             #bfr_pred = self.env.now
             predictions = self.predictor(ONU)
-            print("predictions sent: {}".format(predictions))
+            #print("predictions sent: {}".format(predictions))
             #print("{} seconds".format(self.env.now - bfr_pred))
             # write grant log
             grant_time_file.write("{},{},{},{},{},{},{},{},{}\n".format(MAC_TABLE['olt'], MAC_TABLE[ONU.oid],"02", time_stamp, counter, ONU.oid, buffer_size, self.env.now, grant_final_time))
@@ -1194,10 +1203,13 @@ class collisionDetection(object):
 for seed in SEEDS:
     info_file = open("{}/{}km/general_information/infos-s{}.csv".format(BASE_DIR, DISTANCE, seed), "w")
     info_file.write("Seed,Exponent,pkt_size,w-p,DBA_ALG,n_ONUS,n_OLTs,pkt_loss\n")
+    start_time = datetime.datetime.now()
+    print("{} with {} ONUs started (seed {})".format(MODEL, NUMBER_OF_ONUs, seed))
     for exp in EXPONENTS:
+        print("current exp: {}".format(exp))
         for pkt_size in CPRI_PKT:
             for parameter in PARAMS:
-
+                
                 delay_list = []
 
                 FILENAME = "{}-dist{}-{}ONUs-{}OLTs-{}-exp{}-pkt{}".format(DBA_ALG,DISTANCE,NUMBER_OF_ONUs, NUMBER_OF_OLTs, TRAFFIC, exp, pkt_size)
@@ -1213,7 +1225,7 @@ for seed in SEEDS:
                 overlap_file = open(directory+"csv/overlap/{}-s{}-overlap.csv".format(FILENAME, seed),"w")
                 ai_metrics_file = open(directory+"csv/metrics/{}-s{}-metrics.csv".format(FILENAME, seed), "w")
                             
-                delay_file.write("Mean,STD,Min,Max\n")
+                delay_file.write("Mean,STD,Min,Max,Pkt_loss_mean,Pkt_loss_std\n")
                 grant_time_file.write("source address,destination address,opcode,timestamp,counter,ONU_id,grant_size,start,end\n")
                 grant_usage_file.write("ONU_id,source address,destination address,predicted,start,end,data sent,remaining data\n")
                 #pkt_file.write("ONU_id,timestamp,adist,size\n")
@@ -1251,7 +1263,7 @@ for seed in SEEDS:
                     )
 
                 #OLT creation
-                olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], 'mlp', NUMBER_OF_ONUs)
+                olt = OLT(env, lamb, odn, 0, DBA_ALG, parameter['w'], parameter['p'], MODEL, NUMBER_OF_ONUs)
                 MAC_TABLE['olt'] = "ff:ff:ff:ff:00:01"
                 logging.info("Starting Simulator")
                 env.run(until=SIMULATION_TIME) #Tempo de duracao simulado, em Segundos
@@ -1279,4 +1291,7 @@ for seed in SEEDS:
                 overlap_file.close()
                 ai_metrics_file.close()
                 #aux_file.close()
+    end_time = datetime.datetime.now()
+    delta = end_time - start_time
+    print("Time passed: {} minutes".format(delta.seconds/60))
     info_file.close()
