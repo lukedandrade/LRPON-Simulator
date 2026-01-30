@@ -1,0 +1,11 @@
+{
+    "workbench.editorAssociations": {
+        "*.csv": "default"
+    },
+    "dataWrangler.enabledFileTypes": {
+        "csv": false,
+        "tsv": false,
+        "xls": false,
+        "xlsx": false
+    }
+}

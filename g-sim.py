@@ -286,8 +286,6 @@ class SubStream(object):
             self.env.timeout(off_period)
             print ("wake on : {}".format(self.env.now))
 
-
-
 class SelfSimilar(PacketGenerator):
     """This class represents the self-similar packet generation process """
     def __init__(self,env, id, on_dist, off_dist, fix_pkt_size):
@@ -723,8 +721,6 @@ class MTP(DBA):
                 self.nextThread = aux
             else:
                 print ("ESTA ERRADO")
-
-
 
 class MTP_THREAD(object):
     def __init__(self,env,tNumber,numberONUs,guard_interval,Bmin,grant_store,interTh_store):

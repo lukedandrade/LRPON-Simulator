@@ -43,9 +43,19 @@ Thumbs.db
 #############
 img/*
 test/*
-Hist-exp0.1-s20.png
-Hist-exp0.1-s30.png
-Hist-exp0.1-s40.png
+Packet dist Histograms/*
+pddba_nopred/*
+pddba_pred_none/*
+Graficos/*
+b_9000_t5/*
+Vision by n_ONU/*
+Vision by Payload/*
+Vision by w-p/*
+test_poissonPG_IPACT/*
+test_poissonPG_IPACT_pred_lasso/*
+test_poissonPG_IPACT_pred_mlp/*
+test_poissonPG_IPACT_pred_ols/*
+test_poissonPG_IPACT_pred_ridge/*
 g-sim.py
 Delay médio Poisson PG.png
 Hist-exp0.2-s20.png

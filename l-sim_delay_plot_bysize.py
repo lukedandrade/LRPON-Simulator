@@ -6,7 +6,8 @@ import sys
 from math import sqrt
 
 #Settings
-PRED_ALG = ['ols', 'ridge', 'lasso', 'mlp']
+#PRED_ALG = ['ols', 'ridge', 'lasso', 'mlp']
+PRED_ALG = ['mlp']
 NUMBER_OF_OLTs = 1
 NUMBER_OF_ONUs_vet = ['5', '10', '15', '20']
 DISTANCE = 20 #Distance in kilometers
@@ -36,7 +37,7 @@ parameters = [{'w':5, 'p':1}, {'w':15, 'p':1}, {'w':25, 'p':1}, {'w':5, 'p':2}, 
 #parameters = [{'w':30, 'p':2}, {'w':20, 'p':2}, {'w':25, 'p':2}, {'w':15, 'p':2}]
 
 #PKT_SIZES = ['768000', '1536000', '3072000', '3840000']
-PKT_SIZES = ['3840000']
+PKT_SIZES = ['768000', '1536000', '3072000', '3840000']
 
 def calculateT_student(vetor_medias, f_degrees):
     table_const = 2.262
@@ -51,22 +52,22 @@ def calculateT_student(vetor_medias, f_degrees):
 for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
     for param in parameters:
         try:
-            for model in PRED_ALG:
-                IPACT_Pred_delay_medio[model] = {}
-                ipact_basic_delay_medio[PKT_SIZES[0]] = {}
-                IPACT_Pred_std[model] = {}
-                ipact_basic_std[PKT_SIZES[0]] = {}
-                IPACT_Pred_pl_medio[model] = {}
-                ipact_basic_pl_medio[PKT_SIZES[0]] = {}
-                IPACT_Pred_pl_std[model] = {}
-                ipact_basic_pl_std[PKT_SIZES[0]] = {}
-                delay_proportion_medio[model] = {}
-                delay_proportion_std[model] = {}
+            for size in PKT_SIZES:
+                IPACT_Pred_delay_medio[size] = {}
+                ipact_basic_delay_medio[size] = {}
+                IPACT_Pred_std[size] = {}
+                ipact_basic_std[size] = {}
+                IPACT_Pred_pl_medio[size] = {}
+                ipact_basic_pl_medio[size] = {}
+                IPACT_Pred_pl_std[size] = {}
+                ipact_basic_pl_std[size] = {}
+                delay_proportion_medio[size] = {}
+                delay_proportion_std[size] = {}
             
             #Ipact_pred_delay
-            for size in PKT_SIZES:
+            for model in PRED_ALG:
                 for exp in exponents:            
-                    for model in PRED_ALG:
+                    for size in PKT_SIZES:
                         BASE_DIR = 'test_poissonPG_IPACT_pred_{}'.format(model)
                         ipact_mean_delay = []
                         ipact_std_delay = []
@@ -91,22 +92,22 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
                         media = np.mean(ipact_mean_delay)
                         t_test_results = calculateT_student(ipact_mean_delay, 10)
                         std = t_test_results['t-test amp']
-                        IPACT_Pred_delay_medio[model][exp] = media
-                        IPACT_Pred_std[model][exp] = std
+                        IPACT_Pred_delay_medio[size][exp] = media
+                        IPACT_Pred_std[size][exp] = std
 
                         #media e std de packet loss
                         media = np.mean(mean_pkt_loss)
                         t_test_results = calculateT_student(mean_pkt_loss, 10)
                         std = t_test_results['t-test amp']
-                        IPACT_Pred_pl_medio[model][exp] = media
-                        IPACT_Pred_pl_std[model][exp] = std
+                        IPACT_Pred_pl_medio[size][exp] = media
+                        IPACT_Pred_pl_std[size][exp] = std
 
                         #media e std da proporcao
                         media = np.mean(delay_mean_proportion)
                         t_test_results = calculateT_student(delay_mean_proportion, 10)
                         std = t_test_results['t-test amp']
-                        delay_proportion_medio[model][exp] = media
-                        delay_proportion_std[model][exp] = std
+                        delay_proportion_medio[size][exp] = media
+                        delay_proportion_std[size][exp] = std
 
             ipact_df_pr_medias = pd.DataFrame(IPACT_Pred_delay_medio)
             ipact_df_pr_stds = pd.DataFrame(IPACT_Pred_std)
@@ -151,13 +152,13 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             ipact_b_df_pl_medias = pd.DataFrame(ipact_basic_pl_medio)
             ipact_b_df_pl_std = pd.DataFrame(ipact_basic_pl_std)
 
-            filepath_pasta = "Graficos\Vision by pred_alg"
+            filepath_pasta = "Graficos\Vision by pkt_size"
 
             #Plot Delay
             plt.clf()
             plt.figure(figsize=(14, 10))
-            title = "{} ONUs - {} OLT ({}km) - Trafego {}, {} - média de Delay em 5s de simulação ({}) w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, "All", param['w'], param['p'])
-            filename = "{}_ONUs_{}OLT_{}km-{}-{}-delay-{}_w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, "All", param['w'], param['p'])
+            title = "{} ONUs - {} OLT ({}km) - Trafego {}, {} - média de Delay em 5s de simulação ({}) w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, model, param['w'], param['p'])
+            filename = "{}_ONUs_{}OLT_{}km-{}-{}-delay-{}_w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, model, param['w'], param['p'])
             plt.title(title)
             plt.xlabel("load (%)")
             plt.ylabel("Delay (ms)")
@@ -165,11 +166,11 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             cmap = plt.get_cmap('gnuplot')
             colors = ['c', 'r', 'g', 'b']
             i = 0
-            for model in PRED_ALG:
-                aux_df = pd.DataFrame(ipact_df_pr_medias[model])
-                aux_label = "Ipact pred, {}, load(MB) = {:.3f}, n_ONUs = {}".format(model, float(PKT_SIZES[0])/(1024**2), NUMBER_OF_ONUs)
+            for size in PKT_SIZES:
+                aux_df = pd.DataFrame(ipact_df_pr_medias[size])
+                aux_label = "Ipact pred, {}, load(MB) = {:.3f}, n_ONUs = {}".format(model, float(size)/(1024**2), NUMBER_OF_ONUs)
                 media_delay = np.array(aux_df.iloc[:,0])
-                aux_df = pd.DataFrame(ipact_df_pr_stds[model])
+                aux_df = pd.DataFrame(ipact_df_pr_stds[size])
                 std_delay = np.array(aux_df.iloc[:,0])
                 
                 plt.plot(loads, media_delay, '->', color=colors[i], label=aux_label)
@@ -178,9 +179,9 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             i = 0
             for size in PKT_SIZES:
                 aux_df_b_ipact = pd.DataFrame(ipact_b_df_medias[size])
-                aux_label = "Ipact, load(MB) = {:.3f}, n_ONUs = {}".format(float(PKT_SIZES[0])/(1024**2), NUMBER_OF_ONUs)
+                aux_label = "Ipact, load(MB) = {:.3f}, n_ONUs = {}".format(float(size)/(1024**2), NUMBER_OF_ONUs)
                 media_delay = np.array(aux_df_b_ipact.iloc[:,0])
-                plt.plot(loads, media_delay, '-o', color='k', linestyle='-.', label=aux_label)
+                plt.plot(loads, media_delay, '-o', color=colors[i], linestyle='-.', label=aux_label)
                 i += 1
                 
             filepath_completo = filepath_pasta+"\Delay\{}".format(filename)
@@ -191,8 +192,8 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             #Plot Pkt_loss           
             plt.clf()
             plt.figure(figsize=(14, 10))
-            title = "{} ONUs - {} OLT ({}km) - Trafego {}, {} - Packet Loss em 5s de simulação ({}) w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, "All",  param['w'], param['p'])
-            filename = "{}_ONUs_{}OLT_{}km-{}-{}-pkt_loss-{}_w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, "All", param['w'], param['p'])
+            title = "{} ONUs - {} OLT ({}km) - Trafego {}, {} - Packet Loss em 5s de simulação ({}) w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, model,  param['w'], param['p'])
+            filename = "{}_ONUs_{}OLT_{}km-{}-{}-pkt_loss-{}_w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, model, param['w'], param['p'])
             plt.title(title)
             plt.xlabel("load (%)")
             plt.ylabel("Grants preditos (%)")
@@ -201,11 +202,11 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             colors = ['c', 'r', 'g', 'b']
 
             i = 0
-            for model in PRED_ALG:
-                aux_df = pd.DataFrame(ipact_df_pr_pl_medias[model])
-                aux_label = "Ipact pred, {}, load(MB) = {:.3f}, n_ONUs = {}".format(model, float(PKT_SIZES[0])/(1024**2), NUMBER_OF_ONUs)
+            for size in PKT_SIZES:
+                aux_df = pd.DataFrame(ipact_df_pr_pl_medias[size])
+                aux_label = "Ipact pred, {}, load(MB) = {:.3f}, n_ONUs = {}".format(model, float(size)/(1024**2), NUMBER_OF_ONUs)
                 media_pl = np.array(aux_df.iloc[:,0])
-                aux_df = pd.DataFrame(ipact_df_pr_pl_stds[model])
+                aux_df = pd.DataFrame(ipact_df_pr_pl_stds[size])
                 std_pl = np.array(aux_df.iloc[:,0])
                 
                 plt.plot(loads, media_pl, '->', color=colors[i], label=aux_label)
@@ -214,9 +215,9 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             i = 0
             for size in PKT_SIZES:
                 aux_df_b_ipact = pd.DataFrame(ipact_b_df_pl_medias[size])
-                aux_label = "Ipact, load(MB) = {:.3f}, n_ONUs = {}".format(float(PKT_SIZES[0])/(1024**2), NUMBER_OF_ONUs)
+                aux_label = "Ipact, load(MB) = {:.3f}, n_ONUs = {}".format(float(size)/(1024**2), NUMBER_OF_ONUs)
                 media_delay = np.array(aux_df_b_ipact.iloc[:,0])
-                plt.plot(loads, media_delay, '-o', color='k', linestyle='-.', label=aux_label)
+                plt.plot(loads, media_delay, '-o', color=colors[i], linestyle='-.', label=aux_label)
                 i += 1
 
             filepath_completo = filepath_pasta+"\Packet Loss\{}".format(filename)
@@ -227,8 +228,8 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             #Plot Delay Proportion           
             plt.clf()
             plt.figure(figsize=(14, 10))
-            title = "{} ONUs - {} OLT ({}km) - Trafego {}, {} - Proporção de Delays em 5s de simulação ({}) w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, "All",  param['w'], param['p'])
-            filename = "{}_ONUs_{}OLT_{}km-{}-{}-delay_proportion-{}_w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, "All", param['w'], param['p'])
+            title = "{} ONUs - {} OLT ({}km) - Trafego {}, {} - Proporção de Delays em 5s de simulação ({}) w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, model,  param['w'], param['p'])
+            filename = "{}_ONUs_{}OLT_{}km-{}-{}-delay_proportion-{}_w{}-p{}".format(NUMBER_OF_ONUs, NUMBER_OF_OLTs, DISTANCE, TRAFFIC, DBA_ALG, model, param['w'], param['p'])
             plt.title(title)
             plt.xlabel("load (%)")
             plt.ylabel("Ipact_pred/Ipact")
@@ -237,11 +238,11 @@ for NUMBER_OF_ONUs in NUMBER_OF_ONUs_vet:
             colors = ['c', 'r', 'g', 'b']
 
             i=0
-            for model in PRED_ALG:
-                aux_df = pd.DataFrame(proportion_df_medias[model])
-                aux_label = "Ipact pred, {}, load(MB) = {:.3f}, n_ONUs = {}".format(model, float(PKT_SIZES[0])/(1024**2), NUMBER_OF_ONUs)
+            for size in PKT_SIZES:
+                aux_df = pd.DataFrame(proportion_df_medias[size])
+                aux_label = "Ipact pred, {}, load(MB) = {:.3f}, n_ONUs = {}".format(model, float(size)/(1024**2), NUMBER_OF_ONUs)
                 media_pl = np.array(aux_df.iloc[:,0])
-                aux_df = pd.DataFrame(proportion_df_stds[model])
+                aux_df = pd.DataFrame(proportion_df_stds[size])
                 std_pl = np.array(aux_df.iloc[:,0])
                 
                 plt.plot(loads, media_pl, '->', color=colors[i], label=aux_label)
